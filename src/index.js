@@ -1,5 +1,3 @@
-require("dotenv").config();
-
 const {
   Client,
   GatewayIntentBits,
@@ -20,17 +18,15 @@ const {
   GITHUB_BRANCH = "main",
 } = process.env;
 
-const required = {
-  DISCORD_TOKEN,
-  CLIENT_ID,
-  GUILD_ID,
-  GITHUB_TOKEN,
-  GITHUB_REPO,
-};
+const required = [
+  "DISCORD_TOKEN",
+  "CLIENT_ID",
+  "GUILD_ID",
+  "GITHUB_TOKEN",
+  "GITHUB_REPO",
+];
 
-const missing = Object.entries(required)
-  .filter(([, value]) => !value)
-  .map(([name]) => name);
+const missing = required.filter((name) => !process.env[name]);
 
 if (missing.length) {
   console.error(`Missing environment variables: ${missing.join(", ")}`);
@@ -41,76 +37,55 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
 
-// ---------- GitHub: read, change, and save data.json ----------
-async function updateSiteData(mutate) {
+async function updateSiteData(update) {
   const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_FILE}`;
-
   const headers = {
     Authorization: `Bearer ${GITHUB_TOKEN}`,
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "Content-Type": "application/json",
   };
 
-  let data = {
-    faction: {},
-    announcements: [],
-    roles: [],
-  };
-
+  let data = { faction: {}, announcements: [], roles: [] };
   let sha;
 
-  const getResponse = await fetch(
+  const response = await fetch(
     `${url}?ref=${encodeURIComponent(GITHUB_BRANCH)}`,
     { headers }
   );
 
-  if (getResponse.ok) {
-    const file = await getResponse.json();
+  if (response.ok) {
+    const file = await response.json();
     sha = file.sha;
-
-    try {
-      data = JSON.parse(
-        Buffer.from(file.content, "base64").toString("utf8")
-      );
-    } catch {
-      throw new Error("GitHub data.json contains invalid JSON");
-    }
-  } else if (getResponse.status !== 404) {
-    const body = await getResponse.text();
-    throw new Error(`GitHub read failed (${getResponse.status}): ${body}`);
+    data = JSON.parse(Buffer.from(file.content, "base64").toString("utf8"));
+  } else if (response.status !== 404) {
+    throw new Error(`GitHub read failed: ${response.status}`);
   }
 
-  mutate(data);
-  data.updated = new Date().toISOString();
+  update(data);
 
-  const payload = {
-    message: "Update site data from Discord bot",
+  const body = {
+    message: "Update website data from Discord",
     content: Buffer.from(JSON.stringify(data, null, 2)).toString("base64"),
     branch: GITHUB_BRANCH,
   };
 
-  if (sha) {
-    payload.sha = sha;
-  }
+  if (sha) body.sha = sha;
 
-  const putResponse = await fetch(url, {
+  const save = await fetch(url, {
     method: "PUT",
-    headers,
-    body: JSON.stringify(payload),
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 
-  if (!putResponse.ok) {
-    const body = await putResponse.text();
-    throw new Error(`GitHub write failed (${putResponse.status}): ${body}`);
+  if (!save.ok) {
+    throw new Error(`GitHub write failed: ${save.status}`);
   }
 }
 
-// ---------- Slash commands ----------
 const commands = [
   new SlashCommandBuilder()
     .setName("createrole")
-    .setDescription("Create a Discord role and list it on the website")
+    .setDescription("Create a Discord role and add it to the website")
     .addStringOption((option) =>
       option
         .setName("name")
@@ -122,7 +97,7 @@ const commands = [
       option
         .setName("color")
         .setDescription("Hex color, for example #ff0000")
-        .setRequired(false)
+        .setMaxLength(7)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
     .toJSON(),
@@ -134,8 +109,8 @@ const commands = [
       option
         .setName("text")
         .setDescription("Announcement text")
-        .setMaxLength(500)
         .setRequired(true)
+        .setMaxLength(500)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
@@ -169,31 +144,19 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.deferReply();
 
     const name = interaction.options.getString("name", true);
-    const color = interaction.options.getString("color") || undefined;
+    const color = interaction.options.getString("color");
 
     if (color && !/^#[0-9a-fA-F]{6}$/.test(color)) {
-      return interaction.editReply(
-        "Invalid color. Use a 6-digit hex color such as #ff0000."
-      );
+      return interaction.editReply("Use a valid 6-digit hex color like #ff0000.");
     }
 
-    let role;
-
     try {
-      role = await interaction.guild.roles.create({
+      const role = await interaction.guild.roles.create({
         name,
-        color,
+        color: color || undefined,
         reason: `Created by ${interaction.user.tag}`,
       });
-    } catch (error) {
-      console.error("Role creation failed:", error);
 
-      return interaction.editReply(
-        "Could not create the role. Make sure I have Manage Roles and that my highest role is above the new role."
-      );
-    }
-
-    try {
       await updateSiteData((data) => {
         data.roles = Array.isArray(data.roles) ? data.roles : [];
         data.roles.push({
@@ -202,14 +165,13 @@ client.on("interactionCreate", async (interaction) => {
         });
       });
 
-      return interaction.editReply(
-        `Created role ${role} and added it to the website.`
+      await interaction.editReply(
+        `Created ${role} and added it to the website.`
       );
     } catch (error) {
-      console.error("Website role update failed:", error);
-
-      return interaction.editReply(
-        `Created role ${role}, but I could not update the website. Check GITHUB_TOKEN, GITHUB_REPO, and repository permissions.`
+      console.error("Create role failed:", error);
+      await interaction.editReply(
+        "I could not create the role or update the website. Check my Discord permissions and GitHub settings."
       );
     }
   }
@@ -233,14 +195,11 @@ client.on("interactionCreate", async (interaction) => {
         data.announcements = data.announcements.slice(0, 20);
       });
 
-      return interaction.editReply(
-        "Announcement posted to the website."
-      );
+      await interaction.editReply("Announcement posted to the website.");
     } catch (error) {
-      console.error("Website announcement update failed:", error);
-
-      return interaction.editReply(
-        "Could not update the website. Check GITHUB_TOKEN, GITHUB_REPO, and repository permissions."
+      console.error("Announcement failed:", error);
+      await interaction.editReply(
+        "I could not update the website. Check the GitHub token and repository settings."
       );
     }
   }
