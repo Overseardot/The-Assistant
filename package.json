@@ -1,7 +1,7 @@
 {
-  "name": "faction-discord-bot",
+  "name": "the-assistant",
   "version": "1.2.0",
-  "description": "Discord bot that manages faction roles and website announcements.",
+  "description": "Discord bot for managing faction roles and website announcements.",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
@@ -10,7 +10,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "discord.js": "^14.16.0",
-    "dotenv": "^16.4.5"
+    "discord.js": "^14.16.0"
   }
 }
