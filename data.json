@@ -1,0 +1,14 @@
+{
+  "faction": {
+    "name": "Your Faction Name",
+    "tagline": "Change this line in data.json to describe your faction.",
+    "invite": ""
+  },
+  "announcements": [
+    {
+      "text": "Welcome! Announcements posted with /announce in Discord will show up here.",
+      "date": "2026-09-20T00:00:00.000Z"
+    }
+  ],
+  "roles": []
+}
